@@ -28,7 +28,7 @@ jobs:
       - name: Extract AppWorld project
         run: |
           mkdir project
-          unzip -q AppWorld-MobileStudio.zip -d project
+          unzip -q AppWorld-MobileStudio-FIXED.zip -d project
 
       - name: Build Debug APK
         working-directory: project/AppWorld-Android-Java
