@@ -30,7 +30,7 @@ jobs:
           mkdir project
           unzip -q AppWorld-MobileStudio-FIXED.zip -d project
 
-            - name: Connect Supabase
+      - name: Connect Supabase
         working-directory: project/AppWorld-Android-Java
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -41,34 +41,50 @@ jobs:
           import os
           import json
 
-          p = Path("app/build.gradle")
-          lines = p.read_text().splitlines()
+          path = Path("app/build.gradle")
+          lines = path.read_text().splitlines()
 
           url = os.environ["SUPABASE_URL"]
           key = os.environ["SUPABASE_ANON_KEY"]
 
-          new_lines = []
+          cleaned = []
 
           for line in lines:
               if 'buildConfigField "String", "SUPABASE_URL"' in line:
                   continue
               if 'buildConfigField "String", "SUPABASE_ANON_KEY"' in line:
                   continue
-              new_lines.append(line)
+              cleaned.append(line)
 
-          insert = [
+          insert_lines = [
               '        buildConfigField "String", "SUPABASE_URL", ' + json.dumps(url),
               '        buildConfigField "String", "SUPABASE_ANON_KEY", ' + json.dumps(key)
           ]
 
-          for i, line in enumerate(new_lines):
-              if line.strip() == "defaultConfig {":
-                  new_lines[i + 1:i + 1] = insert
-                  break
+          inserted = False
+          result = []
 
-          p.write_text("\n".join(new_lines) + "\n")
-          print("Supabase BuildConfig fixed successfully.")
+          for line in cleaned:
+              result.append(line)
+
+              if line.strip() == "defaultConfig {" and not inserted:
+                  result.extend(insert_lines)
+                  inserted = True
+
+          if not inserted:
+              raise RuntimeError("defaultConfig block was not found in app/build.gradle")
+
+          path.write_text("\n".join(result) + "\n")
+
+          print("Supabase configuration added successfully.")
           PY
+
+      - name: Verify Supabase configuration
+        working-directory: project/AppWorld-Android-Java
+        run: |
+          echo "Checking Supabase BuildConfig..."
+          grep -n 'SUPABASE_URL' app/build.gradle
+          grep -n 'SUPABASE_ANON_KEY' app/build.gradle
 
       - name: Build Debug APK
         working-directory: project/AppWorld-Android-Java
@@ -79,3 +95,4 @@ jobs:
         with:
           name: AppWorld-Supabase-APK
           path: project/AppWorld-Android-Java/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
