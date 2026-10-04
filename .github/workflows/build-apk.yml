@@ -40,49 +40,23 @@ jobs:
           from pathlib import Path
           import os
           import re
-          import json
 
-          gradle_file = Path("app/build.gradle")
-          text = gradle_file.read_text()
+          p = Path("gradle.properties")
+          text = p.read_text()
 
           url = os.environ["SUPABASE_URL"]
           key = os.environ["SUPABASE_ANON_KEY"]
 
-          # Remove all old Supabase BuildConfig lines
-          text = re.sub(
-              r'(?m)^[ \t]*buildConfigField\s+"String",\s+"SUPABASE_URL".*\n?',
-              '',
-              text
-          )
+          text = re.sub(r'(?m)^SUPABASE_URL=.*$', '', text)
+          text = re.sub(r'(?m)^SUPABASE_ANON_KEY=.*$', '', text)
 
-          text = re.sub(
-              r'(?m)^[ \t]*buildConfigField\s+"String",\s+"SUPABASE_ANON_KEY".*\n?',
-              '',
-              text
-          )
+          text = text.rstrip() + "\n"
+          text += "SUPABASE_URL=" + url + "\n"
+          text += "SUPABASE_ANON_KEY=" + key + "\n"
 
-          # Add the real values once inside defaultConfig
-          fields = (
-              '        buildConfigField "String", "SUPABASE_URL", '
-              + json.dumps(url) + '\n'
-              '        buildConfigField "String", "SUPABASE_ANON_KEY", '
-              + json.dumps(key)
-          )
+          p.write_text(text)
 
-          marker = "    defaultConfig {"
-
-          if marker not in text:
-              raise RuntimeError("defaultConfig block not found")
-
-          text = text.replace(
-              marker,
-              marker + "\n" + fields,
-              1
-          )
-
-          gradle_file.write_text(text)
-
-          print("Supabase configured successfully.")
+          print("Supabase properties configured successfully.")
           PY
 
       - name: Build Debug APK
