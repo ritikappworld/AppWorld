@@ -58,7 +58,62 @@ jobs:
 
           print("Supabase properties configured successfully.")
           PY
+      - name: Fix Supabase BuildConfig
+        working-directory: project/AppWorld-Android-Java
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+          import json
 
+          path = Path("app/build.gradle")
+          text = path.read_text()
+
+          # Remove ALL existing Supabase BuildConfig lines
+          text = re.sub(
+              r'(?m)^[ \t]*buildConfigField\s+"String",\s+"SUPABASE_URL".*\n?',
+              '',
+              text
+          )
+
+          text = re.sub(
+              r'(?m)^[ \t]*buildConfigField\s+"String",\s+"SUPABASE_ANON_KEY".*\n?',
+              '',
+              text
+          )
+
+          url = os.environ["SUPABASE_URL"]
+          key = os.environ["SUPABASE_ANON_KEY"]
+
+          url_groovy = json.dumps(url)
+          key_groovy = json.dumps(key)
+
+          fields = (
+              '        buildConfigField "String", "SUPABASE_URL", '
+              + url_groovy + '\n'
+              '        buildConfigField "String", "SUPABASE_ANON_KEY", '
+              + key_groovy
+          )
+
+          marker = "    defaultConfig {"
+
+          if marker not in text:
+              raise Exception("defaultConfig not found")
+
+          text = text.replace(
+              marker,
+              marker + "\n" + fields,
+              1
+          )
+
+          path.write_text(text)
+
+          print("Supabase BuildConfig fixed.")
+          PY
       - name: Build Debug APK
         working-directory: project/AppWorld-Android-Java
         run: |
