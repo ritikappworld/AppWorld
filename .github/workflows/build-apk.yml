@@ -30,7 +30,7 @@ jobs:
           mkdir project
           unzip -q AppWorld-MobileStudio-FIXED.zip -d project
 
-          - name: Fix Supabase BuildConfig
+      - name: Fix Supabase BuildConfig
         working-directory: project/AppWorld-Android-Java
         run: |
           python3 - <<'PY'
@@ -48,9 +48,8 @@ jobs:
 
           s = "\n".join(new_lines)
 
-          marker = '        buildConfigField "String", "SUPABASE_URL"'
           insert = '''        buildConfigField "String", "SUPABASE_URL", "\\"https://your-project-ref.supabase.co\\""
-          buildConfigField "String", "SUPABASE_ANON_KEY", "\\"YOUR_SUPABASE_ANON_OR_PUBLISHABLE_KEY\\""'''
+                  buildConfigField "String", "SUPABASE_ANON_KEY", "\\"YOUR_SUPABASE_ANON_OR_PUBLISHABLE_KEY\\""'''
 
           s = s.replace(
               '    defaultConfig {',
@@ -61,7 +60,7 @@ jobs:
           p.write_text(s)
           print("Supabase BuildConfig fixed successfully.")
           PY
-          
+
       - name: Build Debug APK
         working-directory: project/AppWorld-Android-Java
         run: gradle assembleDebug --no-daemon
