@@ -30,7 +30,7 @@ jobs:
           mkdir project
           unzip -q AppWorld-MobileStudio-FIXED.zip -d project
 
-      - name: Connect Supabase
+            - name: Connect Supabase
         working-directory: project/AppWorld-Android-Java
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -39,41 +39,35 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import os
-          import re
+          import json
 
           p = Path("app/build.gradle")
-          s = p.read_text()
+          lines = p.read_text().splitlines()
 
           url = os.environ["SUPABASE_URL"]
           key = os.environ["SUPABASE_ANON_KEY"]
 
-          s = re.sub(
-              r'^\s*buildConfigField "String", "SUPABASE_URL".*$',
-              '',
-              s,
-              flags=re.MULTILINE
-          )
+          new_lines = []
 
-          s = re.sub(
-              r'^\s*buildConfigField "String", "SUPABASE_ANON_KEY".*$',
-              '',
-              s,
-              flags=re.MULTILINE
-          )
+          for line in lines:
+              if 'buildConfigField "String", "SUPABASE_URL"' in line:
+                  continue
+              if 'buildConfigField "String", "SUPABASE_ANON_KEY"' in line:
+                  continue
+              new_lines.append(line)
 
-          insert = (
-              '        buildConfigField "String", "SUPABASE_URL", "\\"' + url + '\\""\n'
-              '        buildConfigField "String", "SUPABASE_ANON_KEY", "\\"' + key + '\\""'
-          )
+          insert = [
+              '        buildConfigField "String", "SUPABASE_URL", ' + json.dumps(url),
+              '        buildConfigField "String", "SUPABASE_ANON_KEY", ' + json.dumps(key)
+          ]
 
-          s = s.replace(
-              '    defaultConfig {',
-              '    defaultConfig {\n' + insert,
-              1
-          )
+          for i, line in enumerate(new_lines):
+              if line.strip() == "defaultConfig {":
+                  new_lines[i + 1:i + 1] = insert
+                  break
 
-          p.write_text(s)
-          print("Supabase connected successfully.")
+          p.write_text("\n".join(new_lines) + "\n")
+          print("Supabase BuildConfig fixed successfully.")
           PY
 
       - name: Build Debug APK
