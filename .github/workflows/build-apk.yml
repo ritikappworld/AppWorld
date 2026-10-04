@@ -30,7 +30,7 @@ jobs:
           mkdir project
           unzip -q AppWorld-MobileStudio-FIXED.zip -d project
 
-            - name: Fix Supabase BuildConfig
+      - name: Connect Supabase
         working-directory: project/AppWorld-Android-Java
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -73,36 +73,7 @@ jobs:
           )
 
           p.write_text(s)
-          print("Supabase BuildConfig fixed successfully.")
-          PY
-        working-directory: project/AppWorld-Android-Java
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("app/build.gradle")
-          s = p.read_text()
-
-          lines = s.splitlines()
-          new_lines = []
-
-          for line in lines:
-              if "SUPABASE_URL" not in line and "SUPABASE_ANON_KEY" not in line:
-                  new_lines.append(line)
-
-          s = "\n".join(new_lines)
-
-          insert = '''        buildConfigField "String", "SUPABASE_URL", "\\"https://your-project-ref.supabase.co\\""
-                  buildConfigField "String", "SUPABASE_ANON_KEY", "\\"YOUR_SUPABASE_ANON_OR_PUBLISHABLE_KEY\\""'''
-
-          s = s.replace(
-              '    defaultConfig {',
-              '    defaultConfig {\n' + insert,
-              1
-          )
-
-          p.write_text(s)
-          print("Supabase BuildConfig fixed successfully.")
+          print("Supabase connected successfully.")
           PY
 
       - name: Build Debug APK
@@ -112,5 +83,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppWorld-debug-APK
+          name: AppWorld-Supabase-APK
           path: project/AppWorld-Android-Java/app/build/outputs/apk/debug/app-debug.apk
