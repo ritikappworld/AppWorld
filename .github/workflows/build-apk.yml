@@ -18,19 +18,19 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.2'
+          gradle-version: "8.10.2"
 
       - name: Extract AppWorld project
         run: |
           mkdir project
           unzip -q AppWorld-MobileStudio-FIXED.zip -d project
 
-            - name: Connect Supabase
+      - name: Connect Supabase
         working-directory: project/AppWorld-Android-Java
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -42,48 +42,54 @@ jobs:
           import json
           import re
 
-          p = Path("app/build.gradle")
-          s = p.read_text()
+          path = Path("app/build.gradle")
+          text = path.read_text()
 
           url = os.environ["SUPABASE_URL"]
           key = os.environ["SUPABASE_ANON_KEY"]
 
-          s = re.sub(
+          # Remove every old Supabase BuildConfig entry
+          text = re.sub(
               r'(?m)^[ \t]*buildConfigField\s+"String",\s+"SUPABASE_URL".*\n?',
               '',
-              s
+              text
           )
 
-          s = re.sub(
+          text = re.sub(
               r'(?m)^[ \t]*buildConfigField\s+"String",\s+"SUPABASE_ANON_KEY".*\n?',
               '',
-              s
+              text
           )
 
-          insert = (
+          # Create the correct BuildConfig entries
+          supabase_lines = (
               '        buildConfigField "String", "SUPABASE_URL", '
               + json.dumps(url) + '\n'
               '        buildConfigField "String", "SUPABASE_ANON_KEY", '
               + json.dumps(key)
           )
 
-          if '    defaultConfig {' not in s:
+          # Insert them only inside defaultConfig
+          marker = "    defaultConfig {"
+
+          if marker not in text:
               raise RuntimeError("defaultConfig block not found")
 
-          s = s.replace(
-              '    defaultConfig {',
-              '    defaultConfig {\n' + insert,
+          text = text.replace(
+              marker,
+              marker + "\n" + supabase_lines,
               1
           )
 
-          p.write_text(s)
+          path.write_text(text)
 
-          print("Supabase configuration fixed successfully.")
+          print("Supabase configuration completed successfully.")
           PY
 
       - name: Build Debug APK
         working-directory: project/AppWorld-Android-Java
-        run: gradle assembleDebug --no-daemon
+        run: |
+          gradle assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
