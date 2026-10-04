@@ -30,7 +30,7 @@ jobs:
           mkdir project
           unzip -q AppWorld-MobileStudio-FIXED.zip -d project
 
-      - name: Connect Supabase
+      - name: Configure Supabase
         working-directory: project/AppWorld-Android-Java
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -39,16 +39,16 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import os
-          import json
           import re
+          import json
 
-          path = Path("app/build.gradle")
-          text = path.read_text()
+          gradle_file = Path("app/build.gradle")
+          text = gradle_file.read_text()
 
           url = os.environ["SUPABASE_URL"]
           key = os.environ["SUPABASE_ANON_KEY"]
 
-          # Remove every old Supabase BuildConfig entry
+          # Remove all old Supabase BuildConfig lines
           text = re.sub(
               r'(?m)^[ \t]*buildConfigField\s+"String",\s+"SUPABASE_URL".*\n?',
               '',
@@ -61,15 +61,14 @@ jobs:
               text
           )
 
-          # Create the correct BuildConfig entries
-          supabase_lines = (
+          # Add the real values once inside defaultConfig
+          fields = (
               '        buildConfigField "String", "SUPABASE_URL", '
               + json.dumps(url) + '\n'
               '        buildConfigField "String", "SUPABASE_ANON_KEY", '
               + json.dumps(key)
           )
 
-          # Insert them only inside defaultConfig
           marker = "    defaultConfig {"
 
           if marker not in text:
@@ -77,13 +76,13 @@ jobs:
 
           text = text.replace(
               marker,
-              marker + "\n" + supabase_lines,
+              marker + "\n" + fields,
               1
           )
 
-          path.write_text(text)
+          gradle_file.write_text(text)
 
-          print("Supabase configuration completed successfully.")
+          print("Supabase configured successfully.")
           PY
 
       - name: Build Debug APK
