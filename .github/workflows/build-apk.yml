@@ -30,7 +30,51 @@ jobs:
           mkdir project
           unzip -q AppWorld-MobileStudio-FIXED.zip -d project
 
-      - name: Fix Supabase BuildConfig
+            - name: Fix Supabase BuildConfig
+        working-directory: project/AppWorld-Android-Java
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          p = Path("app/build.gradle")
+          s = p.read_text()
+
+          url = os.environ["SUPABASE_URL"]
+          key = os.environ["SUPABASE_ANON_KEY"]
+
+          s = re.sub(
+              r'^\s*buildConfigField "String", "SUPABASE_URL".*$',
+              '',
+              s,
+              flags=re.MULTILINE
+          )
+
+          s = re.sub(
+              r'^\s*buildConfigField "String", "SUPABASE_ANON_KEY".*$',
+              '',
+              s,
+              flags=re.MULTILINE
+          )
+
+          insert = (
+              '        buildConfigField "String", "SUPABASE_URL", "\\"' + url + '\\""\n'
+              '        buildConfigField "String", "SUPABASE_ANON_KEY", "\\"' + key + '\\""'
+          )
+
+          s = s.replace(
+              '    defaultConfig {',
+              '    defaultConfig {\n' + insert,
+              1
+          )
+
+          p.write_text(s)
+          print("Supabase BuildConfig fixed successfully.")
+          PY
         working-directory: project/AppWorld-Android-Java
         run: |
           python3 - <<'PY'
