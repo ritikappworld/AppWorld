@@ -1,3 +1,63 @@
+name: Build AppWorld APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Extract AppWorld project
+        run: |
+          mkdir project
+          unzip -q AppWorld-MobileStudio-FIXED.zip -d project
+
+      - name: Configure Supabase
+        working-directory: project/AppWorld-Android-Java
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          p = Path("gradle.properties")
+          text = p.read_text()
+
+          url = os.environ["SUPABASE_URL"]
+          key = os.environ["SUPABASE_ANON_KEY"]
+
+          text = re.sub(r'(?m)^SUPABASE_URL=.*$', '', text)
+          text = re.sub(r'(?m)^SUPABASE_ANON_KEY=.*$', '', text)
+
+          text = text.rstrip() + "\n"
+          text += "SUPABASE_URL=" + url + "\n"
+          text += "SUPABASE_ANON_KEY=" + key + "\n"
+
+          p.write_text(text)
+          print("Supabase properties configured successfully.")
+          PY
+
       - name: Fix Supabase BuildConfig
         working-directory: project/AppWorld-Android-Java
         env:
@@ -21,7 +81,6 @@
           url = escape(url)
           key = escape(key)
 
-          # Remove ALL existing Supabase BuildConfig lines
           s = re.sub(
               r'(?m)^[ \t]*buildConfigField[^\n]*SUPABASE_URL[^\n]*\n?',
               '',
@@ -34,7 +93,6 @@
               s
           )
 
-          # Add exactly one correct pair inside defaultConfig
           fields = (
               '        buildConfigField "String", "SUPABASE_URL", "\\"'
               + url +
@@ -44,16 +102,29 @@
               '\\""'
           )
 
-          if "    defaultConfig {" not in s:
-              raise Exception("defaultConfig not found")
+          marker = "    defaultConfig {"
+
+          if marker not in s:
+              raise Exception("defaultConfig block not found")
 
           s = s.replace(
-              "    defaultConfig {",
-              "    defaultConfig {\n" + fields,
+              marker,
+              marker + "\n" + fields,
               1
           )
 
           p.write_text(s)
-
           print("Supabase BuildConfig configured correctly.")
           PY
+
+      - name: Build Debug APK
+        working-directory: project/AppWorld-Android-Java
+        run: |
+          gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppWorld-Supabase-APK
+          path: project/AppWorld-Android-Java/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
