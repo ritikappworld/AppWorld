@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -58,7 +59,8 @@ jobs:
 
           print("Supabase properties configured successfully.")
           PY
-           - name: Fix Supabase BuildConfig
+
+      - name: Fix Supabase BuildConfig
         working-directory: project/AppWorld-Android-Java
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -68,38 +70,55 @@ jobs:
           from pathlib import Path
           import os
           import re
-          import json
 
           p = Path("app/build.gradle")
           s = p.read_text()
 
+          # Remove all existing Supabase BuildConfig lines
           s = re.sub(
               r'(?m)^[ \t]*buildConfigField\s+"String",\s+"SUPABASE_URL".*\n?',
               '',
               s
           )
+
           s = re.sub(
               r'(?m)^[ \t]*buildConfigField\s+"String",\s+"SUPABASE_ANON_KEY".*\n?',
               '',
               s
           )
 
-          url = json.dumps(os.environ["SUPABASE_URL"])
-          key = json.dumps(os.environ["SUPABASE_ANON_KEY"])
+          url = os.environ["SUPABASE_URL"]
+          key = os.environ["SUPABASE_ANON_KEY"]
+
+          # Escape values for Gradle/Java string
+          url = url.replace("\\", "\\\\").replace('"', '\\"')
+          key = key.replace("\\", "\\\\").replace('"', '\\"')
 
           fields = (
-              '        buildConfigField "String", "SUPABASE_URL", ' + url + '\n'
-              '        buildConfigField "String", "SUPABASE_ANON_KEY", ' + key
+              '        buildConfigField "String", "SUPABASE_URL", "\\"'
+              + url +
+              '\\""\n'
+              '        buildConfigField "String", "SUPABASE_ANON_KEY", "\\"'
+              + key +
+              '\\""'
           )
 
           marker = "    defaultConfig {"
+
           if marker not in s:
               raise Exception("defaultConfig block not found")
 
-          s = s.replace(marker, marker + "\n" + fields, 1)
+          s = s.replace(
+              marker,
+              marker + "\n" + fields,
+              1
+          )
+
           p.write_text(s)
-          print("Supabase BuildConfig fixed.")
-          PY 
+
+          print("Supabase BuildConfig fixed successfully.")
+          PY
+
       - name: Build Debug APK
         working-directory: project/AppWorld-Android-Java
         run: |
