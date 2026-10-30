@@ -28,7 +28,7 @@ jobs:
       - name: Extract AppWorld project
         run: |
           mkdir project
-          unzip -q AppWorld-MobileStudio-FIXED.zip -d project
+          unzip -q AppWorld-MobileStudio-UPDATED.zip -d project
 
       - name: Configure Supabase
         working-directory: project/AppWorld-Android-Java
