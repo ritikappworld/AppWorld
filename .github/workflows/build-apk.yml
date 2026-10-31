@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - 'AppWorld-Ritik-Final.zip'
+      - 'AppWorld-Ritik-Final-FIXED.zip'
       - '.github/workflows/build-apk.yml'
 
 permissions:
@@ -14,6 +14,7 @@ permissions:
 
 jobs:
   build:
+    name: Build AppWorld Debug APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -32,18 +33,23 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Check and extract AppWorld project
+      - name: Validate and extract AppWorld project
         shell: bash
         run: |
           set -euo pipefail
-          test -f AppWorld-Ritik-Final.zip || { echo 'AppWorld-Ritik-Final.zip was not found in the repository root.'; exit 1; }
-          unzip -t AppWorld-Ritik-Final.zip
+          ZIP_FILE="AppWorld-Ritik-Final-FIXED.zip"
+          test -f "$ZIP_FILE" || { echo "ERROR: $ZIP_FILE not found in repository root."; exit 1; }
+          unzip -t "$ZIP_FILE"
           mkdir -p project
-          unzip -q AppWorld-Ritik-Final.zip -d project
-          test -f project/AppWorld-Android-Java/settings.gradle || { echo 'Expected project/AppWorld-Android-Java/settings.gradle was not found. Check ZIP folder structure.'; find project -maxdepth 3 -type f | head -80; exit 1; }
-          test -f project/AppWorld-Android-Java/app/build.gradle
+          unzip -q "$ZIP_FILE" -d project
+          PROJECT_DIR="project/AppWorld-Android-Java"
+          test -f "$PROJECT_DIR/settings.gradle" || { echo "ERROR: Expected $PROJECT_DIR/settings.gradle. ZIP folder structure is different."; find project -maxdepth 4 -type f | head -100; exit 1; }
+          test -f "$PROJECT_DIR/build.gradle" || { echo "ERROR: Root build.gradle is missing."; exit 1; }
+          test -f "$PROJECT_DIR/app/build.gradle" || { echo "ERROR: app/build.gradle is missing."; exit 1; }
+          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" || { echo "ERROR: AndroidManifest.xml is missing."; exit 1; }
+          echo "AppWorld project structure validated."
 
-      - name: Configure Supabase properties
+      - name: Configure Supabase BuildConfig fields
         working-directory: project/AppWorld-Android-Java
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -52,10 +58,40 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${SUPABASE_URL:-}" || -z "${SUPABASE_ANON_KEY:-}" ]]; then
-            echo 'Missing GitHub Actions secrets: SUPABASE_URL and/or SUPABASE_ANON_KEY.'
+            echo "ERROR: Add SUPABASE_URL and SUPABASE_ANON_KEY in GitHub repository Actions secrets."
             exit 1
           fi
-          printf '\nSUPABASE_URL=%s\nSUPABASE_ANON_KEY=%s\n' "$SUPABASE_URL" "$SUPABASE_ANON_KEY" >> gradle.properties
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          gradle_file = Path("app/build.gradle")
+          source = gradle_file.read_text(encoding="utf-8")
+          url = os.environ["SUPABASE_URL"].strip()
+          key = os.environ["SUPABASE_ANON_KEY"].strip()
+
+          def java_string(value):
+              return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+
+          # Remove existing SUPABASE fields from all build-type blocks, then add
+          # correctly quoted Java string constants to defaultConfig.
+          source = re.sub(r"(?m)^\s*buildConfigField\s+['\"]String['\"]\s*,\s*['\"]SUPABASE_URL['\"][^\n]*\n?", "", source)
+          source = re.sub(r"(?m)^\s*buildConfigField\s+['\"]String['\"]\s*,\s*['\"]SUPABASE_ANON_KEY['\"][^\n]*\n?", "", source)
+
+          marker = re.search(r"(?m)^(\s*)defaultConfig\s*\{\s*$", source)
+          if not marker:
+              raise SystemExit("ERROR: defaultConfig block not found in app/build.gradle")
+          indent = marker.group(1) + "    "
+          fields = (
+              f'{indent}buildConfigField "String", "SUPABASE_URL", "\\"{java_string(url)}\\""\n'
+              f'{indent}buildConfigField "String", "SUPABASE_ANON_KEY", "\\"{java_string(key)}\\""\n'
+          )
+          insert_at = marker.end()
+          source = source[:insert_at] + "\n" + fields + source[insert_at:]
+          gradle_file.write_text(source, encoding="utf-8")
+          print("Supabase BuildConfig fields configured.")
+          PY
 
       - name: Build Debug APK
         working-directory: project/AppWorld-Android-Java
@@ -64,7 +100,7 @@ jobs:
           set -euo pipefail
           gradle --no-daemon --stacktrace assembleDebug
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: AppWorld-Debug-APK
