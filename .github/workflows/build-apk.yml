@@ -5,10 +5,17 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'AppWorld-Ritik-Final.zip'
+      - '.github/workflows/build-apk.yml'
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -18,113 +25,50 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.10.2"
+          gradle-version: '8.10.2'
 
-      - name: Extract AppWorld project
+      - name: Check and extract AppWorld project
+        shell: bash
         run: |
-          mkdir project
-          unzip -q AppWorld-MobileStudio-UPDATED2.zip -d project
+          set -euo pipefail
+          test -f AppWorld-Ritik-Final.zip || { echo 'AppWorld-Ritik-Final.zip was not found in the repository root.'; exit 1; }
+          unzip -t AppWorld-Ritik-Final.zip
+          mkdir -p project
+          unzip -q AppWorld-Ritik-Final.zip -d project
+          test -f project/AppWorld-Android-Java/settings.gradle || { echo 'Expected project/AppWorld-Android-Java/settings.gradle was not found. Check ZIP folder structure.'; find project -maxdepth 3 -type f | head -80; exit 1; }
+          test -f project/AppWorld-Android-Java/app/build.gradle
 
-      - name: Configure Supabase
+      - name: Configure Supabase properties
         working-directory: project/AppWorld-Android-Java
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import os
-          import re
-
-          p = Path("gradle.properties")
-          text = p.read_text()
-
-          url = os.environ["SUPABASE_URL"]
-          key = os.environ["SUPABASE_ANON_KEY"]
-
-          text = re.sub(r'(?m)^SUPABASE_URL=.*$', '', text)
-          text = re.sub(r'(?m)^SUPABASE_ANON_KEY=.*$', '', text)
-
-          text = text.rstrip() + "\n"
-          text += "SUPABASE_URL=" + url + "\n"
-          text += "SUPABASE_ANON_KEY=" + key + "\n"
-
-          p.write_text(text)
-          print("Supabase properties configured successfully.")
-          PY
-
-      - name: Fix Supabase BuildConfig
-        working-directory: project/AppWorld-Android-Java
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import os
-          import re
-
-          p = Path("app/build.gradle")
-          s = p.read_text()
-
-          url = os.environ["SUPABASE_URL"]
-          key = os.environ["SUPABASE_ANON_KEY"]
-
-          def escape(v):
-              return v.replace("\\", "\\\\").replace('"', '\\"')
-
-          url = escape(url)
-          key = escape(key)
-
-          s = re.sub(
-              r'(?m)^[ \t]*buildConfigField[^\n]*SUPABASE_URL[^\n]*\n?',
-              '',
-              s
-          )
-
-          s = re.sub(
-              r'(?m)^[ \t]*buildConfigField[^\n]*SUPABASE_ANON_KEY[^\n]*\n?',
-              '',
-              s
-          )
-
-          fields = (
-              '        buildConfigField "String", "SUPABASE_URL", "\\"'
-              + url +
-              '\\""\n'
-              '        buildConfigField "String", "SUPABASE_ANON_KEY", "\\"'
-              + key +
-              '\\""'
-          )
-
-          marker = "    defaultConfig {"
-
-          if marker not in s:
-              raise Exception("defaultConfig block not found")
-
-          s = s.replace(
-              marker,
-              marker + "\n" + fields,
-              1
-          )
-
-          p.write_text(s)
-          print("Supabase BuildConfig configured correctly.")
-          PY
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" || -z "${SUPABASE_ANON_KEY:-}" ]]; then
+            echo 'Missing GitHub Actions secrets: SUPABASE_URL and/or SUPABASE_ANON_KEY.'
+            exit 1
+          fi
+          printf '\nSUPABASE_URL=%s\nSUPABASE_ANON_KEY=%s\n' "$SUPABASE_URL" "$SUPABASE_ANON_KEY" >> gradle.properties
 
       - name: Build Debug APK
         working-directory: project/AppWorld-Android-Java
+        shell: bash
         run: |
-          gradle assembleDebug --no-daemon
+          set -euo pipefail
+          gradle --no-daemon --stacktrace assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppWorld-Supabase-APK
+          name: AppWorld-Debug-APK
           path: project/AppWorld-Android-Java/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 14
+          
