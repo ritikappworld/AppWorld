@@ -7,7 +7,7 @@ on:
       - main
     paths:
       - 'AppWorld-Ritik-Final-READY.zip'
-      - '.github/workflows/build-appworld.yml'
+      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: read
