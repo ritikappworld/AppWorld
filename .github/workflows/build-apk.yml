@@ -1,4 +1,4 @@
-name: Build AppWorld APK
+name: Build AppWorld Final READY APK
 
 on:
   workflow_dispatch:
@@ -6,14 +6,14 @@ on:
     branches:
       - main
     paths:
-      - 'AppWorld-Ritik-Final.zip'
-      - '.github/workflows/build-appworld.yml'
+      - 'AppWorld-Ritik-Final-READY.zip'
+      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: appworld-build-${{ github.ref }}
+  group: appworld-final-ready-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,60 +26,95 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Verify ZIP and locate Android project
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="AppWorld-Ritik-Final-READY.zip"
+          test -f "$ZIP_FILE" || {
+            echo "ERROR: $ZIP_FILE must be in the repository root (main Code page)."
+            exit 1
+          }
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+          SETTINGS_FILE="$(find extracted -type f -name settings.gradle -print -quit)"
+          if [[ -z "$SETTINGS_FILE" ]]; then
+            echo "ERROR: settings.gradle was not found inside the ZIP."
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+          if [[ ! -f "$PROJECT_DIR/app/build.gradle" ]]; then
+            echo "ERROR: app/build.gradle was not found beside settings.gradle."
+            exit 1
+          fi
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Android project: $PROJECT_DIR"
+
+      - name: Configure Supabase properties when secrets are available
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          PROJECT_DIR="${{ steps.project.outputs.project_dir }}"
+          PROPS="$PROJECT_DIR/gradle.properties"
+          touch "$PROPS"
+          # Remove placeholder or older values, then add the current GitHub secrets.
+          sed -i '/^SUPABASE_URL=/d; /^SUPABASE_ANON_KEY=/d' "$PROPS"
+          if [[ -n "${SUPABASE_URL:-}" && -n "${SUPABASE_ANON_KEY:-}" ]]; then
+            case "$SUPABASE_URL" in
+              https://*.supabase.co) ;;
+              *) echo "ERROR: SUPABASE_URL must look like https://YOUR-PROJECT.supabase.co"; exit 1 ;;
+            esac
+            if [[ "$SUPABASE_ANON_KEY" == *"service_role"* || "$SUPABASE_ANON_KEY" == sb_secret_* ]]; then
+              echo "ERROR: Use the Supabase anon/publishable key, never service_role or sb_secret."; exit 1
+            fi
+            {
+              printf '\nSUPABASE_URL=%s\n' "$SUPABASE_URL"
+              printf 'SUPABASE_ANON_KEY=%s\n' "$SUPABASE_ANON_KEY"
+            } >> "$PROPS"
+            echo "Supabase secrets configured."
+          else
+            echo "WARNING: Supabase secrets are not both set. APK will build with ZIP defaults; online Supabase features may not connect."
+          fi
+
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
 
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Extract and verify AppWorld project
-        shell: bash
+      - name: Build debug APK
+        working-directory: ${{ steps.project.outputs.project_dir }}
         run: |
           set -euo pipefail
-          test -f AppWorld-Ritik-Final.zip || {
-            echo "ERROR: AppWorld-Ritik-Final.zip is missing from the repository root."
+          gradle --no-daemon --stacktrace clean :app:assembleDebug
+
+      - name: Verify and stage APK
+        env:
+          PROJECT_DIR: ${{ steps.project.outputs.project_dir }}
+        run: |
+          set -euo pipefail
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK" || {
+            echo "ERROR: app-debug.apk was not generated."
+            find "$PROJECT_DIR/app/build/outputs" -type f -print || true
             exit 1
           }
-          mkdir -p "$RUNNER_TEMP/appworld-project"
-          unzip -q AppWorld-Ritik-Final.zip -d "$RUNNER_TEMP/appworld-project"
-          PROJECT_DIR="$RUNNER_TEMP/appworld-project/AppWorld-Android-Java"
-          test -f "$PROJECT_DIR/settings.gradle"
-          test -f "$PROJECT_DIR/build.gradle"
-          test -f "$PROJECT_DIR/app/build.gradle"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          mkdir -p artifacts
+          cp "$APK" artifacts/AppWorld-Final-READY-debug.apk
+          ls -lh artifacts/AppWorld-Final-READY-debug.apk
 
-      - name: Build debug APK
-        shell: bash
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-          if [ -n "${SUPABASE_URL:-}" ]; then
-            export ORG_GRADLE_PROJECT_SUPABASE_URL="$SUPABASE_URL"
-          else
-            echo "WARNING: SUPABASE_URL secret is not set."
-          fi
-          if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
-            export ORG_GRADLE_PROJECT_SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
-          else
-            echo "WARNING: SUPABASE_ANON_KEY secret is not set."
-          fi
-          gradle --no-daemon clean :app:assembleDebug
-
-      - name: Upload debug APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AppWorld-debug-apk
-          path: ${{ runner.temp }}/appworld-project/AppWorld-Android-Java/app/build/outputs/apk/debug/app-debug.apk
+          name: AppWorld-Final-READY-debug-apk
+          path: artifacts/AppWorld-Final-READY-debug.apk
           if-no-files-found: error
           retention-days: 14
