@@ -1,19 +1,20 @@
-name: Build AppWorld Update 1.2.1 APK
+name: Build AppWorld 1.3.0 APK
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
+      - master
     paths:
-      - 'AppWorld-Update-1.2.1-Java-Improved.zip'
-      - '.github/workflows/build-apk.yml'
+      - 'AppWorld-Update-1.3.0-Java.zip'
+      - '.github/workflows/build-appworld-1.3.0.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: appworld-android-build-${{ github.ref }}
+  group: appworld-1-3-0-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -37,23 +38,22 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Check ZIP and extract project
+      - name: Find and extract AppWorld 1.3.0 project
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="AppWorld-Update-1.2.1-Java-Improved.zip"
-          if [ ! -f "$ZIP_FILE" ]; then
+          ZIP_FILE="AppWorld-Update-1.3.0-Java.zip"
+          if [[ ! -f "$ZIP_FILE" ]]; then
             echo "ERROR: $ZIP_FILE was not found in the repository root."
-            echo "Upload the ZIP to the repository root with this exact filename."
+            echo "Upload the ZIP to the top level of the GitHub repository."
             exit 1
           fi
-          unzip -t "$ZIP_FILE"
-          mkdir -p project
-          unzip -q "$ZIP_FILE" -d project
-          PROJECT_DIR="project/AppWorld-Android-Java"
-          if [ ! -f "$PROJECT_DIR/settings.gradle" ] || [ ! -f "$PROJECT_DIR/build.gradle" ] || [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
-            echo "ERROR: Expected Android Gradle project was not found at $PROJECT_DIR."
-            echo "Check that the ZIP contains the AppWorld-Android-Java folder at its top level."
+          mkdir -p "$RUNNER_TEMP/appworld-project"
+          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/appworld-project"
+          PROJECT_DIR="$RUNNER_TEMP/appworld-project/AppWorld-Android-Java"
+          if [[ ! -f "$PROJECT_DIR/settings.gradle" || ! -f "$PROJECT_DIR/app/build.gradle" ]]; then
+            echo "ERROR: ZIP does not contain the expected AppWorld-Android-Java Gradle project."
+            find "$RUNNER_TEMP/appworld-project" -maxdepth 3 -type f | head -80
             exit 1
           fi
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -66,30 +66,32 @@ jobs:
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          GRADLE_ARGS=(--no-daemon --stacktrace --warning-mode all)
-          if [ -n "${SUPABASE_URL:-}" ]; then
-            GRADLE_ARGS+=("-PSUPABASE_URL=${SUPABASE_URL}")
+          GRADLE_ARGS=(--no-daemon --stacktrace)
+          if [[ -n "${SUPABASE_URL:-}" ]]; then
+            GRADLE_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL")
           fi
-          if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
-            GRADLE_ARGS+=("-PSUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}")
+          if [[ -n "${SUPABASE_ANON_KEY:-}" ]]; then
+            GRADLE_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
           fi
-          gradle "${GRADLE_ARGS[@]}" :app:assembleDebug
+          gradle "${GRADLE_ARGS[@]}" clean assembleDebug
 
       - name: Verify APK output
         shell: bash
         run: |
           set -euo pipefail
-          APK_PATH="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -s "$APK_PATH" ]; then
-            echo "ERROR: APK was not generated at $APK_PATH"
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          if [[ ! -s "$APK" ]]; then
+            echo "ERROR: Debug APK was not generated."
             exit 1
           fi
-          ls -lh "$APK_PATH"
+          mkdir -p "$GITHUB_WORKSPACE/apk-output"
+          cp "$APK" "$GITHUB_WORKSPACE/apk-output/AppWorld-1.3.0-debug.apk"
+          ls -lh "$GITHUB_WORKSPACE/apk-output/AppWorld-1.3.0-debug.apk"
 
-      - name: Upload AppWorld APK
+      - name: Upload AppWorld 1.3.0 APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppWorld-Update-1.2.1-debug-apk
-          path: project/AppWorld-Android-Java/app/build/outputs/apk/debug/app-debug.apk
+          name: AppWorld-1.3.0-debug-APK
+          path: apk-output/AppWorld-1.3.0-debug.apk
           if-no-files-found: error
           retention-days: 14
