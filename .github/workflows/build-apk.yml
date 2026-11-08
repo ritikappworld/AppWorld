@@ -77,9 +77,18 @@ jobs:
       - name: Build debug APK
         working-directory: ${{ env.PROJECT_DIR }}
         env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          gradle --no-daemon --stacktrace assembleDebug
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL}" || -z "${SUPABASE_ANON_KEY}" ]]; then
+            echo "Missing GitHub Actions secrets. Add SUPABASE_URL and SUPABASE_ANON_KEY in repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          gradle --no-daemon --stacktrace \
+            -PSUPABASE_URL="${SUPABASE_URL}" \
+            -PSUPABASE_ANON_KEY="${SUPABASE_ANON_KEY}" \
+            assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
