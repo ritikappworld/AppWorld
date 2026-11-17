@@ -7,10 +7,7 @@ on:
       - main
       - master
     paths:
-      - '**/*.java'
-      - '**/*.xml'
-      - '**/*.gradle'
-      - '**/*.properties'
+      - 'AppWorld-Android-Java/**'
       - '.github/workflows/build-apk.yml'
 
 permissions:
@@ -31,13 +28,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK 34
+      # Avoid android-actions/setup-android@v3 here: its setup step is
+      # attempting to install the obsolete SDK package named "tools".
+      - name: Install Android SDK packages
+        shell: bash
         run: |
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
-          yes | sdkmanager --licenses
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $SDK_ROOT" >&2
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
@@ -45,23 +54,22 @@ jobs:
           gradle-version: '8.10.2'
 
       - name: Build AppWorld 2.0 debug APK
+        working-directory: AppWorld-Android-Java
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        shell: bash
         run: |
+          set -euo pipefail
           EXTRA_ARGS=()
-          if [ -n "$SUPABASE_URL" ]; then
-            EXTRA_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL")
-          fi
-          if [ -n "$SUPABASE_ANON_KEY" ]; then
-            EXTRA_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
-          fi
+          if [ -n "${SUPABASE_URL:-}" ]; then EXTRA_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL"); fi
+          if [ -n "${SUPABASE_ANON_KEY:-}" ]; then EXTRA_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"); fi
           gradle --no-daemon assembleDebug "${EXTRA_ARGS[@]}"
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: AppWorld-2.0-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: AppWorld-Android-Java/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
