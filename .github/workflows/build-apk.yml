@@ -28,25 +28,39 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Avoid android-actions/setup-android@v3 here: its setup step is
-      # attempting to install the obsolete SDK package named "tools".
-      - name: Install Android SDK packages
+      - name: Accept Android SDK licenses and install packages
         shell: bash
         run: |
           set -euo pipefail
+
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+
           SDKMANAGER="$(command -v sdkmanager || true)"
           if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+            for candidate in "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager"; do
+              if [ -x "$candidate" ]; then
+                SDKMANAGER="$candidate"
+                break
+              fi
+            done
           fi
-          if [ ! -x "$SDKMANAGER" ]; then
-            echo "sdkmanager not found under $SDK_ROOT" >&2
+
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager was not found in the installed Android SDK." >&2
             exit 1
           fi
-          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+          # Feed license answers through a here-string, not `yes | sdkmanager`.
+          # This avoids the Broken pipe failure seen in the previous workflow.
+          LICENSE_ANSWERS="$(printf 'y\n%.0s' {1..100})"
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses <<< "$LICENSE_ANSWERS"
+
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
 
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
@@ -62,8 +76,12 @@ jobs:
         run: |
           set -euo pipefail
           EXTRA_ARGS=()
-          if [ -n "${SUPABASE_URL:-}" ]; then EXTRA_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL"); fi
-          if [ -n "${SUPABASE_ANON_KEY:-}" ]; then EXTRA_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"); fi
+          if [ -n "${SUPABASE_URL:-}" ]; then
+            EXTRA_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL")
+          fi
+          if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
+            EXTRA_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
+          fi
           gradle --no-daemon assembleDebug "${EXTRA_ARGS[@]}"
 
       - name: Upload APK artifact
