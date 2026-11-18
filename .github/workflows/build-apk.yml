@@ -7,13 +7,20 @@ on:
     branches:
       - main
       - master
+    paths:
+      - 'AppWorld-2.0-Java-FIXED.zip'
+      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: read
 
+concurrency:
+  group: appworld-2-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    name: Build Android APK
+    name: Build AppWorld 2.0 Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -21,76 +28,148 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Verify AppWorld ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP_FILE="AppWorld-2.0-Java-FIXED.zip"
+
+          if [ ! -s "$ZIP_FILE" ]; then
+            echo "::error::AppWorld-2.0-Java-FIXED.zip not found in repository root."
+            exit 1
+          fi
+
+          unzip -t "$ZIP_FILE"
+          echo "AppWorld ZIP verified successfully."
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK 34
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
 
-      - name: Set up Gradle
+      - name: Install Android SDK 34
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sdkmanager --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "platform-tools"
+
+          echo "Android SDK 34 installed successfully."
+
+      - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Detect Android project
+      - name: Extract and detect AppWorld project
         id: project
         shell: bash
         run: |
-          if [ -f "app/build.gradle" ] || [ -f "app/build.gradle.kts" ]; then
-            PROJECT_DIR="."
-          elif [ -f "AppWorld-Android-Java/app/build.gradle" ] || [ -f "AppWorld-Android-Java/app/build.gradle.kts" ]; then
-            PROJECT_DIR="AppWorld-Android-Java"
-          else
-            echo "::error::Android app module not found."
+          set -euo pipefail
+
+          EXTRACT_DIR="$RUNNER_TEMP/appworld-extracted"
+
+          mkdir -p "$EXTRACT_DIR"
+
+          unzip -q "AppWorld-2.0-Java-FIXED.zip" -d "$EXTRACT_DIR"
+
+          SETTINGS_FILE=$(find "$EXTRACT_DIR" \
+            -type f \
+            -name "settings.gradle" \
+            -not -path "*/.gradle/*" \
+            -print -quit)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "::error::settings.gradle not found inside ZIP."
+            find "$EXTRACT_DIR" -maxdepth 5 -type f | head -100
             exit 1
           fi
 
-          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "apk_path=$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+
+          test -f "$PROJECT_DIR/build.gradle" || {
+            echo "::error::Root build.gradle not found."
+            exit 1
+          }
+
+          test -f "$PROJECT_DIR/app/build.gradle" || {
+            echo "::error::App module build.gradle not found."
+            exit 1
+          }
+
+          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" || {
+            echo "::error::AndroidManifest.xml not found."
+            exit 1
+          }
+
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+          echo "AppWorld project detected successfully."
+          echo "Project directory: $PROJECT_DIR"
 
       - name: Build AppWorld 2.0 Debug APK
-        working-directory: ${{ steps.project.outputs.dir }}
+        working-directory: ${{ steps.project.outputs.project_dir }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         shell: bash
         run: |
-          EXTRA_ARGS=()
+          set -euo pipefail
 
-          if [ -n "$SUPABASE_URL" ]; then
-            EXTRA_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL")
+          BUILD_ARGS=(
+            --no-daemon
+            --stacktrace
+            clean
+            :app:assembleDebug
+          )
+
+          if [ -n "${SUPABASE_URL:-}" ]; then
+            BUILD_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL")
           fi
 
-          if [ -n "$SUPABASE_ANON_KEY" ]; then
-            EXTRA_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
+          if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
+            BUILD_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
           fi
 
-          gradle --no-daemon --stacktrace assembleDebug "${EXTRA_ARGS[@]}"
+          gradle "${BUILD_ARGS[@]}"
 
       - name: Verify APK
         env:
-          APK_PATH: ${{ steps.project.outputs.apk_path }}
+          PROJECT_DIR: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
-          if [ ! -s "$APK_PATH" ]; then
-            echo "::error::APK not found or empty: $APK_PATH"
+          set -euo pipefail
+
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -s "$APK" ]; then
+            echo "::error::AppWorld APK was not generated."
             exit 1
           fi
 
-          echo "APK successfully generated!"
-          ls -lh "$APK_PATH"
+          mkdir -p "$GITHUB_WORKSPACE/apk-output"
 
-      - name: Upload APK artifact
+          cp "$APK" \
+            "$GITHUB_WORKSPACE/apk-output/AppWorld-2.0-debug.apk"
+
+          echo "APK verification successful."
+          ls -lh "$GITHUB_WORKSPACE/apk-output/AppWorld-2.0-debug.apk"
+
+      - name: Upload AppWorld 2.0 APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppWorld-2.0-debug-apk
-          path: ${{ steps.project.outputs.apk_path }}
+          name: AppWorld-2.0-DEBUG-APK
+          path: apk-output/AppWorld-2.0-debug.apk
           if-no-files-found: error
           retention-days: 14
