@@ -1,3 +1,4 @@
+
 name: Build AppWorld 2.0 APK
 
 on:
@@ -6,9 +7,6 @@ on:
     branches:
       - main
       - master
-    paths:
-      - 'AppWorld-Android-Java/**'
-      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: read
@@ -32,28 +30,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          SDKMANAGER="$(command -v sdkmanager)"
 
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-
-          SDKMANAGER="$(command -v sdkmanager || true)"
-          if [ -z "$SDKMANAGER" ]; then
-            for candidate in "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager"; do
-              if [ -x "$candidate" ]; then
-                SDKMANAGER="$candidate"
-                break
-              fi
-            done
-          fi
-
-          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager was not found in the installed Android SDK." >&2
-            exit 1
-          fi
-
-          # Feed license answers through a here-string, not `yes | sdkmanager`.
-          # This avoids the Broken pipe failure seen in the previous workflow.
           LICENSE_ANSWERS="$(printf 'y\n%.0s' {1..100})"
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses <<< "$LICENSE_ANSWERS"
 
@@ -62,19 +41,46 @@ jobs:
             "platforms;android-34" \
             "build-tools;34.0.0"
 
-      - name: Set up Gradle 8.10.2
+      - name: Locate Android project
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SETTINGS="$(find . -type f \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -not -path '*/.gradle/*' -print -quit)"
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: settings.gradle not found"
+            find . -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$SETTINGS")"
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && \
+             [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            echo "ERROR: app module not found in $PROJECT_DIR"
+            exit 1
+          fi
+
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Found project: $PROJECT_DIR"
+
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Build AppWorld 2.0 debug APK
-        working-directory: AppWorld-Android-Java
+      - name: Build AppWorld 2.0 APK
+        shell: bash
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        shell: bash
         run: |
           set -euo pipefail
+          cd "${{ steps.project.outputs.dir }}"
+
           EXTRA_ARGS=()
           if [ -n "${SUPABASE_URL:-}" ]; then
             EXTRA_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL")
@@ -82,12 +88,13 @@ jobs:
           if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
             EXTRA_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
           fi
+
           gradle --no-daemon assembleDebug "${EXTRA_ARGS[@]}"
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AppWorld-2.0-debug-apk
-          path: AppWorld-Android-Java/app/build/outputs/apk/debug/app-debug.apk
+          path: '**/app/build/outputs/apk/debug/app-debug.apk'
           if-no-files-found: error
           retention-days: 14
