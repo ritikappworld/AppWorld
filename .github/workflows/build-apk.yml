@@ -14,7 +14,7 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -26,24 +26,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # v4 avoids the removed Android SDK "tools" package requested by v3.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v4.0.2
+        uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools'
-          accept-android-sdk-licenses: 'yes'
-          log-accepted-android-sdk-licenses: 'false'
+          packages: platform-tools
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
 
-      - name: Install Android 34 SDK components
+      - name: Install Android SDK 34
+        shell: bash
         run: |
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+          yes | sdkmanager --licenses
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
-      - name: Set up Gradle 8.10.2
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Detect project folder
+      - name: Detect Android project
         id: project
         shell: bash
         run: |
@@ -52,9 +53,10 @@ jobs:
           elif [ -f "AppWorld-Android-Java/app/build.gradle" ]; then
             PROJECT_DIR="AppWorld-Android-Java"
           else
-            echo "ERROR: app/build.gradle not found. Keep the AppWorld-Android-Java folder in the repository root, or upload the Android project contents to the root."
+            echo "::error::app/build.gradle not found. Upload the AppWorld-Android-Java project folder to the repository."
             exit 1
           fi
+
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
           echo "apk_path=$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
 
@@ -66,20 +68,27 @@ jobs:
         shell: bash
         run: |
           EXTRA_ARGS=()
+
           if [ -n "$SUPABASE_URL" ]; then
             EXTRA_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL")
           fi
+
           if [ -n "$SUPABASE_ANON_KEY" ]; then
             EXTRA_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
           fi
+
           gradle --no-daemon --stacktrace assembleDebug "${EXTRA_ARGS[@]}"
 
-      - name: Verify APK exists
+      - name: Verify APK
         env:
           APK_PATH: ${{ steps.project.outputs.apk_path }}
+        shell: bash
         run: |
-          test -s "$APK_PATH"
-          echo "APK successfully created: $APK_PATH"
+          if [ ! -s "$APK_PATH" ]; then
+            echo "::error::APK was not generated at $APK_PATH"
+            exit 1
+          fi
+          echo "APK generated successfully: $APK_PATH"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
