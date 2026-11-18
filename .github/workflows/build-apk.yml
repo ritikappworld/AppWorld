@@ -27,13 +27,22 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
+          packages: ''
           accept-android-sdk-licenses: true
-          packages: |
-            platform-tools
-            platforms;android-34
-            build-tools;34.0.0
+
+      - name: Install Android 34 packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+
+          sdkmanager --sdk_root="$SDK_ROOT" \
+            --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
 
       - name: Extract AppWorld ZIP
         shell: bash
@@ -42,11 +51,11 @@ jobs:
 
           ZIP="AppWorld-2.0-Java-Updated.zip"
 
-          if [ ! -f "$ZIP" ]; then
-            echo "ERROR: AppWorld 2.0 ZIP missing"
+          test -f "$ZIP" || {
+            echo "AppWorld ZIP missing"
             ls -la
             exit 1
-          fi
+          }
 
           mkdir -p _appworld_build
           unzip -q "$ZIP" -d _appworld_build
@@ -55,18 +64,12 @@ jobs:
             \( -name settings.gradle -o -name settings.gradle.kts \) \
             -not -path '*/.gradle/*' -print -quit)
 
-          if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle not found"
-            exit 1
-          fi
+          test -n "$SETTINGS"
 
           PROJECT_DIR="$(dirname "$SETTINGS")"
 
-          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && \
-             [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "ERROR: Android app module missing"
-            exit 1
-          fi
+          test -f "$PROJECT_DIR/app/build.gradle" || \
+          test -f "$PROJECT_DIR/app/build.gradle.kts"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
@@ -82,7 +85,6 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
 
           ARGS=()
@@ -98,6 +100,7 @@ jobs:
           gradle --no-daemon assembleDebug "${ARGS[@]}"
 
           mkdir -p "$GITHUB_WORKSPACE/apk-output"
+
           cp app/build/outputs/apk/debug/app-debug.apk \
             "$GITHUB_WORKSPACE/apk-output/AppWorld-2.0.apk"
 
