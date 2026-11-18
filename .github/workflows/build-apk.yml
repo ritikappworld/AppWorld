@@ -1,3 +1,4 @@
+
 name: Build AppWorld 2.0 APK
 
 on:
@@ -26,18 +27,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
+      - name: Set up Android SDK 34
         uses: android-actions/setup-android@v4
         with:
-          packages: platform-tools
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
-
-      - name: Install Android SDK 34
-        shell: bash
-        run: |
-          yes | sdkmanager --licenses
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -48,19 +43,19 @@ jobs:
         id: project
         shell: bash
         run: |
-          if [ -f "app/build.gradle" ]; then
+          if [ -f "app/build.gradle" ] || [ -f "app/build.gradle.kts" ]; then
             PROJECT_DIR="."
-          elif [ -f "AppWorld-Android-Java/app/build.gradle" ]; then
+          elif [ -f "AppWorld-Android-Java/app/build.gradle" ] || [ -f "AppWorld-Android-Java/app/build.gradle.kts" ]; then
             PROJECT_DIR="AppWorld-Android-Java"
           else
-            echo "::error::app/build.gradle not found. Upload the AppWorld-Android-Java project folder to the repository."
+            echo "::error::Android app module not found."
             exit 1
           fi
 
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
           echo "apk_path=$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
 
-      - name: Build debug APK
+      - name: Build AppWorld 2.0 Debug APK
         working-directory: ${{ steps.project.outputs.dir }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -85,10 +80,12 @@ jobs:
         shell: bash
         run: |
           if [ ! -s "$APK_PATH" ]; then
-            echo "::error::APK was not generated at $APK_PATH"
+            echo "::error::APK not found or empty: $APK_PATH"
             exit 1
           fi
-          echo "APK generated successfully: $APK_PATH"
+
+          echo "APK successfully generated!"
+          ls -lh "$APK_PATH"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
