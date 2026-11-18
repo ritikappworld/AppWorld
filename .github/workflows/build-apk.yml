@@ -14,7 +14,7 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout repository
@@ -26,13 +26,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # v4 avoids the removed Android SDK "tools" package requested by v3.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4.0.2
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: 'yes'
+          log-accepted-android-sdk-licenses: 'false'
 
-      - name: Install Android SDK packages
+      - name: Install Android 34 SDK components
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
 
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
@@ -48,11 +52,10 @@ jobs:
           elif [ -f "AppWorld-Android-Java/app/build.gradle" ]; then
             PROJECT_DIR="AppWorld-Android-Java"
           else
-            echo "ERROR: app/build.gradle not found. Upload the contents of AppWorld-Android-Java or keep that folder at repository root."
+            echo "ERROR: app/build.gradle not found. Keep the AppWorld-Android-Java folder in the repository root, or upload the Android project contents to the root."
             exit 1
           fi
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "APK_PATH=$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_ENV"
           echo "apk_path=$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
 
       - name: Build debug APK
@@ -72,7 +75,8 @@ jobs:
           gradle --no-daemon --stacktrace assembleDebug "${EXTRA_ARGS[@]}"
 
       - name: Verify APK exists
-        shell: bash
+        env:
+          APK_PATH: ${{ steps.project.outputs.apk_path }}
         run: |
           test -s "$APK_PATH"
           echo "APK successfully created: $APK_PATH"
