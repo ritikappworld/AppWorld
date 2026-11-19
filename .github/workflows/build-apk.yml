@@ -1,175 +1,96 @@
+name: Build AppWorld 2.0.2 APK
 
-name: Build AppWorld 2.0 APK
-
-on:
+"on":
   workflow_dispatch:
   push:
     branches:
       - main
       - master
-    paths:
-      - 'AppWorld-2.0-Java-FIXED.zip'
-      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: appworld-2-build-${{ github.ref }}
+  group: appworld-2-0-2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build AppWorld 2.0 Android APK
+    name: Build Android Debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify AppWorld ZIP
+      - name: Locate AppWorld project
+        id: locate
         shell: bash
         run: |
-          set -euo pipefail
-
-          ZIP_FILE="AppWorld-2.0-Java-FIXED.zip"
-
-          if [ ! -s "$ZIP_FILE" ]; then
-            echo "::error::AppWorld-2.0-Java-FIXED.zip not found in repository root."
+          if [[ -f "app/build.gradle" && -f "settings.gradle" ]]; then
+            PROJECT_DIR="."
+          elif [[ -f "AppWorld-Android-Java/app/build.gradle" && -f "AppWorld-Android-Java/settings.gradle" ]]; then
+            PROJECT_DIR="AppWorld-Android-Java"
+          else
+            echo "ERROR: AppWorld Gradle project was not found. Extract the ZIP contents into the repository, or keep the AppWorld-Android-Java folder at repository root."
+            echo "Repository root contents:"
+            ls -la
             exit 1
           fi
+          echo "dir=${PROJECT_DIR}" >> "$GITHUB_OUTPUT"
+          echo "Using AppWorld project directory: ${PROJECT_DIR}"
 
-          unzip -t "$ZIP_FILE"
-          echo "AppWorld ZIP verified successfully."
-
-      - name: Set up JDK 17
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          accept-android-sdk-licenses: true
-          log-accepted-android-sdk-licenses: false
+        uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK 34
+      - name: Install Android SDK packages
         shell: bash
         run: |
-          set -euo pipefail
-
-          sdkmanager --install \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "platform-tools"
-
-          echo "Android SDK 34 installed successfully."
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-34" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Extract and detect AppWorld project
-        id: project
+      - name: Build AppWorld debug APK
         shell: bash
-        run: |
-          set -euo pipefail
-
-          EXTRACT_DIR="$RUNNER_TEMP/appworld-extracted"
-
-          mkdir -p "$EXTRACT_DIR"
-
-          unzip -q "AppWorld-2.0-Java-FIXED.zip" -d "$EXTRACT_DIR"
-
-          SETTINGS_FILE=$(find "$EXTRACT_DIR" \
-            -type f \
-            -name "settings.gradle" \
-            -not -path "*/.gradle/*" \
-            -print -quit)
-
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "::error::settings.gradle not found inside ZIP."
-            find "$EXTRACT_DIR" -maxdepth 5 -type f | head -100
-            exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
-
-          test -f "$PROJECT_DIR/build.gradle" || {
-            echo "::error::Root build.gradle not found."
-            exit 1
-          }
-
-          test -f "$PROJECT_DIR/app/build.gradle" || {
-            echo "::error::App module build.gradle not found."
-            exit 1
-          }
-
-          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" || {
-            echo "::error::AndroidManifest.xml not found."
-            exit 1
-          }
-
-          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-
-          echo "AppWorld project detected successfully."
-          echo "Project directory: $PROJECT_DIR"
-
-      - name: Build AppWorld 2.0 Debug APK
-        working-directory: ${{ steps.project.outputs.project_dir }}
+        working-directory: ${{ steps.locate.outputs.dir }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          GRADLE_ARGS=()
+          if [[ -n "${SUPABASE_URL:-}" ]]; then
+            GRADLE_ARGS+=("-PSUPABASE_URL=${SUPABASE_URL}")
+          fi
+          if [[ -n "${SUPABASE_ANON_KEY:-}" ]]; then
+            GRADLE_ARGS+=("-PSUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}")
+          fi
+          gradle --no-daemon --stacktrace clean assembleDebug "${GRADLE_ARGS[@]}"
+
+      - name: Verify APK was generated
         shell: bash
         run: |
-          set -euo pipefail
-
-          BUILD_ARGS=(
-            --no-daemon
-            --stacktrace
-            clean
-            :app:assembleDebug
-          )
-
-          if [ -n "${SUPABASE_URL:-}" ]; then
-            BUILD_ARGS+=("-PSUPABASE_URL=$SUPABASE_URL")
-          fi
-
-          if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
-            BUILD_ARGS+=("-PSUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
-          fi
-
-          gradle "${BUILD_ARGS[@]}"
-
-      - name: Verify APK
-        env:
-          PROJECT_DIR: ${{ steps.project.outputs.project_dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -s "$APK" ]; then
-            echo "::error::AppWorld APK was not generated."
+          APK_PATH="${{ steps.locate.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk"
+          if [[ ! -s "$APK_PATH" ]]; then
+            echo "ERROR: APK was not generated at: $APK_PATH"
             exit 1
           fi
+          ls -lh "$APK_PATH"
 
-          mkdir -p "$GITHUB_WORKSPACE/apk-output"
-
-          cp "$APK" \
-            "$GITHUB_WORKSPACE/apk-output/AppWorld-2.0-debug.apk"
-
-          echo "APK verification successful."
-          ls -lh "$GITHUB_WORKSPACE/apk-output/AppWorld-2.0-debug.apk"
-
-      - name: Upload AppWorld 2.0 APK
+      - name: Upload AppWorld 2.0.2 APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppWorld-2.0-DEBUG-APK
-          path: apk-output/AppWorld-2.0-debug.apk
+          name: AppWorld-2.0.2-debug-apk
+          path: ${{ steps.locate.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
