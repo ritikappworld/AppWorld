@@ -32,13 +32,10 @@ jobs:
           EXTRACT_DIR="$RUNNER_TEMP/AppWorld-2.0.2"
 
           if [ ! -f "$ZIP_PATH" ]; then
-            echo "::error::ZIP file not found: $ZIP_NAME"
-            echo "Repository files:"
+            echo "::error::ZIP not found: $ZIP_NAME"
             ls -lah "$GITHUB_WORKSPACE"
             exit 1
           fi
-
-          echo "Found ZIP: $ZIP_NAME"
 
           mkdir -p "$EXTRACT_DIR"
           unzip -q "$ZIP_PATH" -d "$EXTRACT_DIR"
@@ -47,6 +44,7 @@ jobs:
 
           while IFS= read -r FILE; do
             DIR="$(dirname "$FILE")"
+
             if [ -f "$DIR/app/build.gradle" ] || [ -f "$DIR/app/build.gradle.kts" ]; then
               PROJECT_DIR="$DIR"
               break
@@ -54,15 +52,13 @@ jobs:
           done < <(find "$EXTRACT_DIR" -type f \( -name settings.gradle -o -name settings.gradle.kts \))
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::Android Gradle project not found inside ZIP."
+            echo "::error::Android project not found"
             find "$EXTRACT_DIR" -maxdepth 6 -type f
             exit 1
           fi
 
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-
-          echo "Android project found:"
-          echo "$PROJECT_DIR"
+          echo "Project found: $PROJECT_DIR"
 
       - name: Set Up Java 17
         uses: actions/setup-java@v4
@@ -71,12 +67,18 @@ jobs:
           java-version: '17'
 
       - name: Set Up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          accept-android-sdk-licenses: 'yes'
 
       - name: Install Android SDK 34
+        shell: bash
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          set -euo pipefail
+          sdkmanager --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
 
       - name: Set Up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
@@ -97,11 +99,10 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -s "$APK" ]; then
-            echo "::error::APK generation failed."
+            echo "::error::APK not generated"
             exit 1
           fi
 
-          echo "APK successfully generated:"
           ls -lh "$APK"
 
       - name: Upload AppWorld 2.0.2 APK
