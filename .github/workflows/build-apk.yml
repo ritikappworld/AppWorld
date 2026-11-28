@@ -27,7 +27,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Locate or Extract AppWorld Project
+      - name: Locate AppWorld Project
         id: project
         shell: bash
         run: |
@@ -35,7 +35,6 @@ jobs:
 
           PROJECT=""
 
-          # First: find an already extracted Android project
           while IFS= read -r file; do
             DIR="$(dirname "$file")"
             if [ -f "$DIR/app/build.gradle" ]; then
@@ -44,94 +43,102 @@ jobs:
             fi
           done < <(find "$GITHUB_WORKSPACE" \
             -name settings.gradle \
-            -not -path '*/.gradle/*' \
-            -print)
+            -not -path '*/.gradle/*' -print)
 
-          # Second: extract a ZIP if no project folder was found
           if [ -z "$PROJECT" ]; then
             ZIP_FILE="$(find "$GITHUB_WORKSPACE" \
-              -maxdepth 3 -type f -iname '*.zip' \
-              | head -n 1 || true)"
+              -maxdepth 3 -type f -iname '*.zip' | head -n 1 || true)"
 
-            if [ -n "$ZIP_FILE" ]; then
-              mkdir -p "$RUNNER_TEMP/appworld-extracted"
-              unzip -q "$ZIP_FILE" \
-                -d "$RUNNER_TEMP/appworld-extracted"
-
-              while IFS= read -r file; do
-                DIR="$(dirname "$file")"
-                if [ -f "$DIR/app/build.gradle" ]; then
-                  PROJECT="$DIR"
-                  break
-                fi
-              done < <(find "$RUNNER_TEMP/appworld-extracted" \
-                -name settings.gradle -print)
+            if [ -z "$ZIP_FILE" ]; then
+              echo "ERROR: AppWorld ZIP not found."
+              exit 1
             fi
+
+            mkdir -p "$RUNNER_TEMP/appworld"
+            unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/appworld"
+
+            while IFS= read -r file; do
+              DIR="$(dirname "$file")"
+              if [ -f "$DIR/app/build.gradle" ]; then
+                PROJECT="$DIR"
+                break
+              fi
+            done < <(find "$RUNNER_TEMP/appworld" \
+              -name settings.gradle -print)
           fi
 
           if [ -z "$PROJECT" ]; then
-            echo "ERROR: AppWorld Gradle project not found."
-            echo "Expected settings.gradle and app/build.gradle."
+            echo "ERROR: Valid Android Gradle project not found."
             exit 1
           fi
 
-          echo "Project found: $PROJECT"
+          echo "Found AppWorld: $PROJECT"
           echo "project_dir=$PROJECT" >> "$GITHUB_OUTPUT"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK 34
         shell: bash
         run: |
           set -euo pipefail
 
-          SDKMANAGER="$(find "$ANDROID_HOME" \
-            -name sdkmanager -type f | head -n 1)"
+          export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
-          yes | "$SDKMANAGER" --licenses || true
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null \
+            | sort -V | tail -n 1)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: Android sdkmanager not found."
+            exit 1
+          fi
+
+          echo "Using SDK Manager: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" \
+            --sdk_root="$ANDROID_HOME" --licenses || true
 
           "$SDKMANAGER" \
+            --sdk_root="$ANDROID_HOME" \
+            --install \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
+
+          echo "Android SDK installation completed."
 
       - name: Setup Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Verify Android Project
+      - name: Verify Build Environment
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
+          java -version
+          gradle --version
           test -f settings.gradle
           test -f app/build.gradle
-          echo "Java version:"
-          java -version
-          echo "Gradle version:"
-          gradle --version
-          echo "Android SDK: $ANDROID_HOME"
+          echo "Android project verified."
 
       - name: Build Debug APK
-        id: build
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
           set -o pipefail
-          gradle --no-daemon \
-            --stacktrace \
-            --info \
-            assembleDebug 2>&1 | tee "$RUNNER_TEMP/appworld-build.log"
+          gradle --no-daemon --stacktrace assembleDebug \
+            2>&1 | tee "$RUNNER_TEMP/appworld-build.log"
 
-      - name: Upload APK Artifact
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: AppWorld-2.0.3-Debug-APK
-          path: |
-            ${{ steps.project.outputs.project_dir }}/app/build/outputs/apk/debug/*.apk
+          path: ${{ steps.project.outputs.project_dir }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
 
